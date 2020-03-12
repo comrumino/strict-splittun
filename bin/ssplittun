@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# Script : strict-splittun (strict split tunnel)
+# Author : comrumino
+# License: GPLv3
+# Date   : June 2016
+#          March 2020 (Updated)
+#
+# Platform:
+#   Arch Linux
+#
+# Purpose: 
+#   Strictly split-tunnel over OpenVPN (owner has UID 0) and dropping traffic with an owner other than UID 0
+#
+########################################################################################################################
+#        PACKAGE PREREQUISITES
+########################################################################################################################
+# pacman -S openvpn iptables iproute2
+#
+########################################################################################################################
+#        VARIABLES
+########################################################################################################################
+declare -r vpn_config="/home/archie/ivpn-openvpn-config/USA-Chicago.ovpn"
+declare -r nic="enp5s0"
+declare -r bridge="br_mint"
+declare -r namespace="nsvpn"
+declare -rA veth=([bridge]='veth_mint_br' [netns]='veth_mint_ns')
+declare -rA ip=([bridge]='192.0.2.1' [netns]='192.0.2.2')
+
+########################################################################################################################
+#        FUNCTIONS
+########################################################################################################################
+function ansi_wrap_msg() { printf "\e[1;${1}m${2}\e[m"; }
+function blue_msg() { ansi_wrap_msg "34" "$1"; }
+function error_exit() { ansi_wrap_msg "31" "$1"; exit 1; }
+
+bridge_to_netns() {
+    sudo ip netns add ${namespace}
+    sudo ip link add ${bridge} type bridge
+    sudo ip link add ${veth[bridge]} type veth peer name ${veth[netns]}
+    sudo ip link set ${veth[bridge]} up
+    sudo ip link set ${veth[netns]} up
+    sudo ip link set ${veth[bridge]} master ${bridge}
+    sudo ip link set ${veth[netns]} netns ${namespace}
+
+    sudo ip addr add ${ip[bridge]}'/24' dev ${bridge}
+    sudo ip netns exec ${namespace} ip link set lo up
+    sudo ip netns exec ${namespace} ip link set ${veth[netns]} up
+    sudo ip netns exec ${namespace} ip addr add ${ip[netns]}'/24' dev ${veth[netns]}
+    sudo ip netns exec ${namespace} ip route add default via ${ip[bridge]}
+    sudo ip link set ${bridge} up
+
+    sudo iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE
+    sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    sudo iptables -A FORWARD -i ${bridge} -o ${nic} -j ACCEPT
+}
+
+netns_append_iptable_rules() {
+    #Allow loopback device (internal communication)
+    sudo ip netns exec ${namespace} iptables -A INPUT -i lo -j ACCEPT
+    #Accept all TUN connections (tun = VPN tunnel)
+    sudo ip netns exec ${namespace} iptables -A INPUT -i tun+ -j ACCEPT
+    sudo ip netns exec ${namespace} iptables -A OUTPUT -o tun+ -j ACCEPT
+    #inetSharing
+    sudo ip netns exec ${namespace} iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    sudo ip netns exec ${namespace} iptables -A INPUT -m state --state NEW -i tun0 -j ACCEPT
+    # Allow OpenVPN
+    sudo ip netns exec ${namespace} iptables -A INPUT -p udp --sport 1194 -j ACCEPT
+    sudo ip netns exec ${namespace} iptables -A OUTPUT -p udp --dport 1194 -j ACCEPT
+    sudo ip netns exec ${namespace} iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
+    #Set default policies to drop all communication unless specifically allowed
+    sudo ip netns exec ${namespace} iptables -P INPUT DROP
+    sudo ip netns exec ${namespace} iptables -P OUTPUT DROP
+    sudo ip netns exec ${namespace} iptables -P FORWARD DROP
+}
+
+setup() {
+    sudo modprobe tun
+    bridge_to_netns
+    netns_append_iptable_rules
+    sudo ip netns exec nsvpn /sbin/openvpn --config ${vpn_config} & disown
+    sudo ip netns exec nsvpn ping 8.8.8.8 -c 1 -W 10
+    [[ "$?" != "0" ]] && error_exit "Failed to ping 8.8.8.8 once within 10 seconds... Exiting now.\n"
+    sudo ip netns exec nsvpn ip addr show tun0
+    [[ "$?" != "0" ]] && error_exit "Failed to show the network interface for vpn tunnel... Exiting now.\n"
+
+}
+
+cleanup() {
+    sudo kill $(sudo ps -aux | grep openvpn | awk '{print $2'} | head -n -1)
+    sudo ip link del ${veth[bridge]}
+    sudo ip link del ${bridge}
+    sudo ip netns delete ${namespace}
+}
+
+main() {
+    setup
+    xterm -xrm 'XTerm.vt100.allowTitleOps: false' -T "Namespace: "${namespace} -hold -e "sudo ip netns exec nsvpn su $LOGNAME; bash" 
+    cleanup
+}
+
+########################################################################################################################
+#        MAIN
+########################################################################################################################
+main
