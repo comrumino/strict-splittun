@@ -32,7 +32,7 @@ declare -rA ip=([bridge]='192.0.2.1' [netns]='192.0.2.2')
 ########################################################################################################################
 function ansi_wrap_msg() { printf "\e[1;${1}m${2}\e[m"; }
 function blue_msg() { ansi_wrap_msg "34" "$1"; }
-function error_exit() { ansi_wrap_msg "31" "$1"; exit 1; }
+function error_exit() { ansi_wrap_msg "31" "$1"; cleanup; exit 1; }
 
 bridge_to_netns() {
     sudo ip netns add ${namespace}
@@ -81,13 +81,15 @@ setup() {
     sudo ip netns exec nsvpn /sbin/openvpn --config ${vpn_config} & disown
     sudo ip netns exec nsvpn ping 8.8.8.8 -c 1 -W 10
     [[ "$?" != "0" ]] && error_exit "Failed to ping 8.8.8.8 once within 10 seconds... Exiting now.\n"
+    # TODO: sleeps have no place here, save them for embedded system hardware init...find a better solution than sleep
+    sleep 2
     sudo ip netns exec nsvpn ip addr show tun0
     [[ "$?" != "0" ]] && error_exit "Failed to show the network interface for vpn tunnel... Exiting now.\n"
 
 }
 
 cleanup() {
-    sudo kill $(sudo ps -aux | grep openvpn | awk '{print $2'} | head -n -1)
+    # TODO: cleanup causes openvpn errors before eventually sending it a SIGTERM, this could be nicer
     sudo ip link del ${veth[bridge]}
     sudo ip link del ${bridge}
     sudo ip netns delete ${namespace}
