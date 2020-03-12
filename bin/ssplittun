@@ -21,7 +21,8 @@
 #        VARIABLES
 ########################################################################################################################
 declare -r vpn_config="${HOME}/ivpn-openvpn-config/USA-Chicago.ovpn"
-declare -r nic="enp5s0"
+nic="$(ip route show default | grep -o 'dev [^ ]*' | awk '{print $2}')"
+declare -r nic="${nic}"
 declare -r bridge="br_mint"
 declare -r namespace="nsvpn"
 declare -rA veth=([bridge]='veth_mint_br' [netns]='veth_mint_ns')
@@ -32,7 +33,7 @@ declare -rA ip=([bridge]='192.0.2.1' [netns]='192.0.2.2')
 ########################################################################################################################
 function ansi_wrap_msg() { printf "\e[1;${1}m${2}\e[m"; }
 function blue_msg() { ansi_wrap_msg "34" "$1"; }
-function error_exit() { ansi_wrap_msg "31" "$1"; cleanup; exit 1; }
+function error_exit() { ansi_wrap_msg "31" "$1.. Exiting now.\n"; cleanup; exit 1; }
 
 bridge_to_netns() {
     sudo ip netns add ${namespace}
@@ -76,15 +77,16 @@ netns_append_iptable_rules() {
 
 setup() {
     sudo modprobe tun
+    [[ "${#nic}" == "0" ]] && error_exit "Failed to find nic with default route. Please hard code or set default route."
     bridge_to_netns
     netns_append_iptable_rules
     sudo ip netns exec nsvpn /sbin/openvpn --config ${vpn_config} & disown
     sudo ip netns exec nsvpn ping 8.8.8.8 -c 1 -W 10
-    [[ "$?" != "0" ]] && error_exit "Failed to ping 8.8.8.8 once within 10 seconds... Exiting now.\n"
+    [[ "$?" != "0" ]] && error_exit "Failed to ping 8.8.8.8 once within 10 seconds."
     # TODO: sleeps have no place here, save them for embedded system hardware init...find a better solution than sleep
     sleep 2
     sudo ip netns exec nsvpn ip addr show tun0
-    [[ "$?" != "0" ]] && error_exit "Failed to show the network interface for vpn tunnel... Exiting now.\n"
+    [[ "$?" != "0" ]] && error_exit "Failed to show the network interface for vpn tunnel."
 
 }
 
