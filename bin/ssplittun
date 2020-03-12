@@ -35,6 +35,12 @@ function ansi_wrap_msg() { printf "\e[1;${1}m${2}\e[m"; }
 function blue_msg() { ansi_wrap_msg "34" "$1"; }
 function error_exit() { ansi_wrap_msg "31" "$1.. Exiting now.\n"; cleanup; exit 1; }
 
+sane_env_check() {
+    sudo modprobe tun
+    [[ ! -e "${vpn_config}" ]] && error_exit "Could not find config @ ${vpn_config}. Please update \`${BASH_SOURCE}\`."
+    [[ "${#nic}" == "0" ]] && error_exit "Failed to find nic with default route. Please hard code or set default route."
+}
+
 bridge_to_netns() {
     sudo ip netns add ${namespace}
     sudo ip link add ${bridge} type bridge
@@ -76,8 +82,7 @@ netns_append_iptable_rules() {
 }
 
 setup() {
-    sudo modprobe tun
-    [[ "${#nic}" == "0" ]] && error_exit "Failed to find nic with default route. Please hard code or set default route."
+    sane_env_check
     bridge_to_netns
     netns_append_iptable_rules
     sudo ip netns exec nsvpn /sbin/openvpn --config ${vpn_config} & disown
