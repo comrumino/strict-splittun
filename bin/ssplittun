@@ -10,7 +10,7 @@
 #   Arch Linux
 #
 # Purpose: 
-#   Strictly split-tunnel over OpenVPN (owner has UID 0) and dropping traffic with an owner other than UID 0
+#   Strictly split-tunnel over OpenVPN (ran with root UID 0) by dropping non-root traffic within the network namespace
 #
 ########################################################################################################################
 #        PACKAGE PREREQUISITES
@@ -20,7 +20,7 @@
 ########################################################################################################################
 #        VARIABLES
 ########################################################################################################################
-declare -r vpn_config="/home/archie/ivpn-openvpn-config/USA-Chicago.ovpn"
+declare -r vpn_config="${HOME}/ivpn-openvpn-config/USA-Chicago.ovpn"
 declare -r nic="enp5s0"
 declare -r bridge="br_mint"
 declare -r namespace="nsvpn"
